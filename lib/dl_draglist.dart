@@ -218,7 +218,13 @@ class _MyDrag extends Drag {
         left: curPos.dx,
         top: curPos.dy,
         child: SizedBox(
-            height: mySize.height, width: mySize.width, child: subWidget),
+            height: mySize.height,
+            width: mySize.width,
+            child: subWidget is Material
+                ? subWidget
+                : Material(
+                    child: subWidget,
+                  )),
       );
     });
     overLayState.insert(entry);
