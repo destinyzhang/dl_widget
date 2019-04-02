@@ -1,9 +1,9 @@
-# flutter 简单可拖动列表框
+# flutter 拖拽list
 
 ![](https://raw.githubusercontent.com/destinyzhang/resource/master/dl_widget/demo_draglist.gif)
 
-
 ### 使用buider函数 默认纵向
+```dart
 List<int> list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 DragList<int>.buildFromBuilder(
               updateDragDataIdx: (data) => list.indexWhere((i) => i == data),
@@ -35,7 +35,9 @@ DragList<int>.buildFromBuilder(
                 });
               },
             );
+```
 ### 使用List<Widget> 指定横向
+```dart
 List<int> list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 DragList.buildFromList(
                 scrollDirection: Axis.horizontal,
@@ -68,3 +70,4 @@ DragList.buildFromList(
                     list.insert(to, f);
                   });
                 });
+```
