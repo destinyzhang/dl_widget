@@ -3,61 +3,129 @@ library dl_widget;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:vector_math/vector_math_64.dart';
+import 'package:dl_widget/dl_tool.dart';
 
-typedef DragListWidgetBuilder<T> = Widget Function(
-    BuildContext context, T item);
+typedef DragListWidgetBuilder<T> = Data2Widget<T> Function(
+    BuildContext context, int index);
 
-typedef _OnDragStart = bool Function(int index, Size size);
+typedef UpdateDragDataIdx<T> = int Function(T data);
+
+typedef _CheckCanDrag = bool Function();
+typedef _OnDragStart = void Function(_ItemDrag drag);
 typedef _OnDragEnd = void Function();
-typedef _OnDragMove = void Function(Offset pos);
+typedef _OnDragMove = void Function();
 typedef OnDragEnd = void Function(int from, int to);
+
+class Data2Widget<T> {
+  Data2Widget({@required this.data, @required this.widget});
+
+  final Widget widget;
+  final T data;
+}
+
+class _DragMeta<T> {
+  _DragMeta(
+      {@required this.data,
+      @required this.index,
+      @required this.itemDrag,
+      @required this.dragIndex});
+
+  final T data;
+  final _ItemDrag itemDrag;
+  int index;
+  int dragIndex;
+
+  bool get isVertical => itemDrag.scrollDirection == Axis.vertical;
+
+  Offset get pos => itemDrag.curPos;
+
+  Size get size => itemDrag.widgetSize;
+
+  Offset get checkPos => isVertical
+      ? itemDrag.curPos.translate(10, itemDrag.widgetSize.height / 2)
+      : itemDrag.curPos.translate(itemDrag.widgetSize.width / 2, 10);
+}
 
 class DragList<T> extends StatefulWidget {
   final DragListWidgetBuilder<T> widgetBuilder;
-  final List<T> list;
+  final UpdateDragDataIdx<T> updateDragDataIdx;
   final OnDragEnd onDragEnd;
+  final Axis scrollDirection;
 
-  DragList({Key key, this.widgetBuilder, List<T> list, this.onDragEnd})
-      : this.list = List<T>.generate(list.length, (i) => list[i]),
+  DragList.buildFromBuilder(
+      {Key key,
+      Axis scrollDirection,
+      @required DragListWidgetBuilder<T> widgetBuilder,
+      @required UpdateDragDataIdx<T> updateDragDataIdx,
+      @required this.onDragEnd})
+      : assert(widgetBuilder != null),
+        this.scrollDirection = scrollDirection ?? Axis.vertical,
+        this.widgetBuilder = ((ctx, idx) => widgetBuilder(ctx, idx)),
+        this.updateDragDataIdx = updateDragDataIdx,
         super(key: key);
+
+  static DragList buildFromList(
+      {Key key,
+      Axis scrollDirection,
+      @required List<Widget> list,
+      @required onDragEnd}) {
+    return DragList<int>.buildFromBuilder(
+        widgetBuilder: (ctx, idx) {
+          if (idx >= list.length) return null;
+          return Data2Widget<int>(data: idx, widget: list[idx]);
+        },
+        scrollDirection: scrollDirection,
+        updateDragDataIdx: null,
+        onDragEnd: onDragEnd);
+  }
 
   @override
   _DragListState createState() => _DragListState<T>();
 }
 
 class _DragListState<T> extends State<DragList<T>> {
-  List<T> list = new List<T>();
-  _DragItemMeta dragItemMeta;
+  _DragMeta<T> dragMeta;
   ScrollController scrollController = ScrollController();
   bool _isScrollMove = false;
 
-  @override
-  void initState() {
-    super.initState();
-    list.addAll(widget.list);
-  }
+  bool get isVertical => widget.scrollDirection == Axis.vertical;
+
+  bool get isDrag => dragMeta != null;
 
   @override
   void didUpdateWidget(DragList<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
-    list.clear();
-    list.addAll(widget.list);
+    //正在拖拽
+    if (isDrag) {
+      //没有更新拖拽数据索引的函数,就放弃拖拽
+      dragMeta.itemDrag.scrollDirection = widget.scrollDirection;
+      dragMeta.index = widget.updateDragDataIdx != null
+          ? widget.updateDragDataIdx(dragMeta.data)
+          : null;
+      if (dragMeta.index == null || dragMeta.index < 0) {
+        _DragMeta<T> _dragMeta = dragMeta;
+        dragMeta = null;
+        _dragMeta.itemDrag.cancel();
+      }
+    }
   }
 
   void _scrollMove() {
     if (_isScrollMove) return;
-    double topDy = dragItemMeta.pos.dy;
-    double bottomDy = dragItemMeta.pos.dy + dragItemMeta.size.height;
-    double height = Overlay.of(context).context.size.height;
-    if (topDy < 10 || height - bottomDy < 10) {
+    double frontOff = isVertical ? dragMeta.pos.dy : dragMeta.pos.dx;
+    double backOff = isVertical
+        ? dragMeta.pos.dy + dragMeta.size.height
+        : dragMeta.pos.dx + dragMeta.size.width;
+    Size ovSize = Overlay.of(context).context.size;
+    double ovOff = isVertical ? ovSize.height : ovSize.width;
+    if (frontOff < 10 || ovOff - backOff < 10) {
       _isScrollMove = true;
       scrollController
-          .animateTo(scrollController.offset + (topDy < 10 ? -20.0 : 20.0),
+          .animateTo(scrollController.offset + (frontOff < 10 ? -40.0 : 40.0),
               duration: Duration(milliseconds: 500), curve: Curves.linear)
           .then((v) {
         _isScrollMove = false;
-        if (dragItemMeta != null) _scrollMove();
+        if (dragMeta != null) _scrollMove();
       });
     }
   }
@@ -68,23 +136,23 @@ class _DragListState<T> extends State<DragList<T>> {
     RenderSliverList it = ctx.findRenderObject();
     RenderBox currentRender = it.firstChild;
     while (currentRender != null) {
-      Size _size = _TransformHelp.sizeRender(currentRender);
-      Offset _pos =
-          _TransformHelp.posRender(currentRender, Overlay.of(context));
+      Size _size = WidgetTool.sizeRender(currentRender);
+      Offset _pos = WidgetTool.posRender(currentRender, Overlay.of(context));
       //判断点是否进入item区域
       if (Rect.fromLTWH(_pos.dx, _pos.dy, _size.width, _size.height)
-          .contains(dragItemMeta.checkPos)) {
+          .contains(dragMeta.checkPos)) {
         SliverMultiBoxAdaptorParentData data = currentRender.parentData;
         //判断是否是不同的item,有可能是在替身SizedBox上面
-        if (dragItemMeta.dragIndex != data.index) {
+        if (dragMeta.dragIndex != data.index) {
           //判断是否进入哦item的1/3中间空间,是的话交换
-          if (Rect.fromLTWH(_pos.dx, _pos.dy + (_size.height / 3), _size.width,
-                  _size.height / 3)
-              .contains(dragItemMeta.checkPos)) {
+          if (Rect.fromLTWH(
+                  isVertical ? _pos.dx : _pos.dx + (_size.width / 3),
+                  isVertical ? _pos.dy + (_size.height / 3) : _pos.dy,
+                  isVertical ? _size.width : _size.width / 3,
+                  isVertical ? _size.height / 3 : _size.height)
+              .contains(dragMeta.checkPos)) {
             setState(() {
-              T item = list.removeAt(dragItemMeta.dragIndex);
-              list.insert(data.index, item);
-              dragItemMeta.dragIndex = data.index;
+              dragMeta.dragIndex = data.index;
             });
           }
         }
@@ -97,41 +165,52 @@ class _DragListState<T> extends State<DragList<T>> {
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
+        scrollDirection: widget.scrollDirection,
         controller: scrollController,
         itemBuilder: (BuildContext context2, int index) {
-          if (index >= list.length) return null;
-          T _value = list[index];
-          //当前拖拽的元素，使用替身SizedBox占位
-          if (index == dragItemMeta?.dragIndex)
-            return SizedBox(
-                height: dragItemMeta.size.height,
-                width: dragItemMeta.size.width);
+          //在拖拽
+          if (isDrag) {
+            //绘制被拖拽的对象
+            if (index == dragMeta.dragIndex)
+              return SizedBox(
+                  height: dragMeta.size.height, width: dragMeta.size.width);
+            //往上拖了
+            if (dragMeta.index > dragMeta.dragIndex) {
+              if (dragMeta.dragIndex < index && index <= dragMeta.index)
+                --index;
+            } else if (dragMeta.index < dragMeta.dragIndex) {
+              //往下拖了
+              if (dragMeta.index <= index && index < dragMeta.dragIndex)
+                ++index;
+            }
+          }
+          Data2Widget<T> dw = widget.widgetBuilder(context2, index);
+          if (dw == null) return null;
+          T data = dw.data;
           return _DragListItem(
-            widget: widget.widgetBuilder(context2, _value),
-            index: index,
-            onDragStart: (idx, size) {
-              if (dragItemMeta != null) return false;
+            scrollDirection: widget.scrollDirection,
+            widget: dw.widget,
+            onDragStart: (drag) {
+              if (dragMeta != null) return;
               setState(() {
-                dragItemMeta = _DragItemMeta(size, idx, idx);
+                dragMeta = _DragMeta<T>(
+                    data: data, index: index, itemDrag: drag, dragIndex: index);
               });
-              return true;
             },
             onDragEnd: () {
               setState(() {
-                if (dragItemMeta != null && widget.onDragEnd != null)
-                  widget.onDragEnd(dragItemMeta.index, dragItemMeta.dragIndex);
-                dragItemMeta = null;
+                if (dragMeta != null && widget.onDragEnd != null)
+                  widget.onDragEnd(dragMeta.index, dragMeta.dragIndex);
+                dragMeta = null;
               });
             },
-            onDragMove: (pos) {
-              if (dragItemMeta != null) {
-                dragItemMeta.pos = pos;
-                dragItemMeta.checkPos =
-                    pos.translate(10, dragItemMeta.size.height / 2);
+            onDragMove: () {
+              if (dragMeta != null) {
                 _scrollMove();
                 _checkWhichItemPick(context2);
               }
             },
+            checkCanDrag: () => dragMeta == null,
           );
         });
   }
@@ -140,17 +219,19 @@ class _DragListState<T> extends State<DragList<T>> {
 class _DragListItem extends StatefulWidget {
   _DragListItem(
       {Key key,
+      this.scrollDirection,
       this.widget,
-      this.index,
       this.onDragStart,
       this.onDragEnd,
-      this.onDragMove})
+      this.onDragMove,
+      this.checkCanDrag})
       : super(key: key);
   final Widget widget;
-  final int index;
   final _OnDragStart onDragStart;
   final _OnDragEnd onDragEnd;
   final _OnDragMove onDragMove;
+  final _CheckCanDrag checkCanDrag;
+  final Axis scrollDirection;
 
   @override
   _DragListItemState createState() => _DragListItemState();
@@ -160,25 +241,23 @@ class _DragListItemState extends State<_DragListItem> {
   GestureRecognizer _gestureRecognizer;
 
   DelayedMultiDragGestureRecognizer createRecognizer() {
-    return new DelayedMultiDragGestureRecognizer()
+    return DelayedMultiDragGestureRecognizer()
       ..onStart = (Offset position) {
-        Size _size = _TransformHelp.sizeCtx(context);
-        Offset _pos = _TransformHelp.posCtx(context);
-        if (!widget.onDragStart(widget.index, _size)) return null;
-        _OnDragEnd _onDragEnd = widget.onDragEnd;
-        return _MyDrag(
-          mySize: _size,
-          subWidget: widget.widget,
-          pos: _pos,
+        if (!widget.checkCanDrag()) return null;
+        _ItemDrag drag = _ItemDrag(
+          scrollDirection: widget.scrollDirection,
+          widgetSize: WidgetTool.sizeCtx(context),
+          widget: widget.widget,
+          pos: WidgetTool.posCtx(context),
           overLayState: Overlay.of(
             context,
             debugRequiredFor: widget,
           ),
-          onDragEnd: () {
-            _onDragEnd();
-          },
+          onDragEnd: widget.onDragEnd,
           onDragMove: widget.onDragMove,
         );
+        widget.onDragStart(drag);
+        return drag;
       };
   }
 
@@ -196,82 +275,65 @@ class _DragListItemState extends State<_DragListItem> {
   }
 }
 
-class _MyDrag extends Drag {
-  Widget subWidget;
-  OverlayEntry entry;
+//拖动对象
+class _ItemDrag extends Drag {
+  final Widget widget;
+  final Size widgetSize;
+  final _OnDragEnd onDragEnd;
+  final _OnDragMove onDragMove;
+  Axis scrollDirection;
   Offset curPos;
-  Size mySize;
-  _OnDragEnd onDragEnd;
-  _OnDragMove onDragMove;
+  OverlayEntry _entry;
 
-  _MyDrag(
-      {this.subWidget,
-      this.mySize,
+  bool get isVertical => scrollDirection == Axis.vertical;
+
+  _ItemDrag(
+      {this.scrollDirection,
+      this.widget,
+      this.widgetSize,
       this.onDragEnd,
       this.onDragMove,
       OverlayState overLayState,
       Offset pos}) {
     //位置下移5个像素制造选中效果
-    this.curPos = Offset(pos.dx, pos.dy + 5);
-    this.entry = OverlayEntry(builder: (context1) {
+    this.curPos = isVertical ? pos.translate(0, 5) : pos.translate(5, 0);
+    this._entry = OverlayEntry(builder: (context1) {
       return Positioned(
         left: curPos.dx,
         top: curPos.dy,
         child: SizedBox(
-            height: mySize.height,
-            width: mySize.width,
-            child: subWidget is Material
-                ? subWidget
+            height: widgetSize.height,
+            width: widgetSize.width,
+            child: widget is Material
+                ? widget
                 : Material(
-                    child: subWidget,
+                    child: widget,
                   )),
       );
     });
-    overLayState.insert(entry);
+    overLayState.insert(_entry);
   }
 
   @override
   void update(DragUpdateDetails details) {
-    curPos = curPos.translate(0, details.delta.dy);
-    this.entry.markNeedsBuild();
-    onDragMove(curPos); //位置移动到中间来
+    curPos = isVertical
+        ? curPos.translate(0, details.delta.dy)
+        : curPos.translate(details.delta.dx, 0);
+    this._entry?.markNeedsBuild();
+    onDragMove();
   }
 
   @override
   void end(DragEndDetails details) {
-    entry.remove();
+    _entry?.remove();
+    _entry = null;
     onDragEnd();
   }
 
   @override
   void cancel() {
-    entry.remove();
+    _entry?.remove();
+    _entry = null;
     onDragEnd();
   }
-}
-
-//拖动项目元数据
-class _DragItemMeta {
-  final Size size;
-  final int index;
-  int dragIndex;
-  Offset pos; //当前拖动控件位置
-  Offset checkPos; //用来检查滑动位置
-  _DragItemMeta(this.size, this.index, this.dragIndex);
-}
-
-//帮助取得ui大小和位置
-class _TransformHelp {
-  static Size sizeRender(RenderBox box) => Size.copy(box.size);
-
-  static Size sizeCtx(BuildContext ctx) => sizeRender(ctx.findRenderObject());
-
-  static Offset posRender(RenderObject obj, OverlayState os) {
-    Vector3 v3 =
-        obj.getTransformTo(os?.context?.findRenderObject()).getTranslation();
-    return Offset(v3.x, v3.y);
-  }
-
-  static Offset posCtx(BuildContext ctx) =>
-      posRender(ctx.findRenderObject(), Overlay.of(ctx));
 }
