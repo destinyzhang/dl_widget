@@ -1,7 +1,14 @@
 # flutter 拖拽list
 
 ![](https://raw.githubusercontent.com/destinyzhang/resource/master/dl_widget/demo_draglist.gif)
-
+###pubspec.yaml引用
+```yaml
+dependencies:
+  dl_widget:
+    git:
+      url: git://github.com/destinyzhang/dl_widget.git
+      ref: ^1.0
+```
 ### 使用buider函数 默认纵向
 ```dart
 List<int> list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
