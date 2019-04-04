@@ -1,7 +1,7 @@
 # flutter 拖拽list
 
 ![](https://raw.githubusercontent.com/destinyzhang/resource/master/dl_widget/demo_draglist.gif)
-###pubspec.yaml引用
+### pubspec.yaml引用
 ```yaml
 dependencies:
   dl_widget:
